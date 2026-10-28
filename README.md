@@ -1,15 +1,19 @@
-# AI Assessment Extraction & Answer Mapping
+# VedaAI — AI-assisted assessment review
 
-A teacher uploads a question paper and a student's handwritten answer sheet
-(PDF or images). The app extracts every question, extracts and transcribes
-the student's answers, maps each answer to its question (even out of order),
-highlights the **exact region** of the answer sheet where that answer
-appears, and grades each answer with AI feedback — matching the flow in the
-provided Figma design (Upload → Extracting → Question/Answer mapping).
+VedaAI is a prototype that helps teachers review handwritten assessments.
+Upload a question paper and one student's answer sheet; the app uses AI to
+extract the questions, transcribe and match answers (including answers written
+out of order), and highlight where those answers appear on the original pages.
+It also provides suggested marks and feedback for the teacher to review.
+
+The goal is to reduce the time spent finding and organizing answers—not to
+replace a teacher or make final grading decisions. AI can misread handwriting,
+match an answer incorrectly, or suggest an inaccurate grade. Review all
+transcriptions, matches, and marks before using them.
 
 ## Features
 
-- Upload a question paper + one student's answer sheet (PDF or PNG/JPG),
+- Upload a question paper and one student's answer sheet (PDF or PNG/JPG),
   with upload progress and processing state.
 - Extracts every question in printed order, preserving original numbering.
 - Splits labelled sub-parts into separate entries (e.g. `11(a)`, `11(b)`).
@@ -18,11 +22,11 @@ provided Figma design (Upload → Extracting → Question/Answer mapping).
 - Flags questions with no matching answer as **Not Answered**.
 - Flags handwritten content that doesn't match any question as an
   **unmatched answer**, shown separately.
-- Draws a tight highlight box on the exact answer region for the selected
-  question, on the correct page.
+- Draws an AI-estimated highlight box around the answer region for the
+  selected question, on the correct page.
 - Supports answers that span multiple pages (highlights each page's region
   and shows a "spans pages: …" hint).
-- Per-question AI grading: score, correctness, and short feedback.
+- Per-question AI grading suggestions: score, correctness, and short feedback.
 
 ## Tech stack
 
@@ -51,8 +55,8 @@ provided Figma design (Upload → Extracting → Question/Answer mapping).
      matches (or none), a transcription, a normalized bounding box
      (`0–1000`) for highlighting, and a flag for answers continuing from a
      previous page — plus a grade (score/correctness/feedback) for every
-     matched question, using its own subject knowledge since no answer key
-     is supplied.
+     matched question. Since no answer key or rubric is supplied, these
+     grades are suggestions based on the model's own judgment.
    The server then groups blocks by question into `answerRegions`, marks
    questions with zero matched blocks as `unanswered`, and collects
    unmatched blocks into `unmatchedAnswers`.
@@ -63,36 +67,34 @@ provided Figma design (Upload → Extracting → Question/Answer mapping).
 
 ## AI model/API used
 
-**Google Gemini** (`gemini-3.1-flash-lite` by default, configurable via
-`GEMINI_MODEL`), via the `@google/genai` SDK. Chosen over Groq because
-Gemini does native multimodal handwriting OCR *and* native bounding-box
-grounding — it returns a region's coordinates directly, which is exactly
-what "highlight the exact answer region" requires. Get a free key at
-[aistudio.google.com/apikey](https://aistudio.google.com/apikey).
-
-The flash-lite variant is used instead of full `flash` because, at the time
-of building this, the free tier's `gemini-3.5-flash` quota was capped at
-just 20 requests/day/project — too low for a live demo that will be tested
-repeatedly — while the lite variant's free quota is high enough for normal
-use. Gemini calls are wrapped with retry/backoff for transient `429`/`503`
-responses, which the free tier returns occasionally under load.
+The backend uses Google Gemini through the `@google/genai` SDK. The default
+model is `gemini-3.1-flash-lite`; set `GEMINI_MODEL` to use another model
+available to your API key. Gemini receives the uploaded page images to
+analyze their printed and handwritten content. See Google's current API
+terms, pricing, and quotas before using the service with real student work.
 
 ## Assumptions & limitations
 
-- No answer key is uploaded, so grading reflects the model's own judgment of
-  correctness/completeness, not a rubric the teacher provided.
+- No answer key or teacher-defined rubric is used. Suggested grades reflect
+  the model's judgment of correctness and completeness and may be inaccurate.
+- This prototype does not provide teacher accounts, class management,
+  persistent assessment history, or a workflow for approving final grades.
 - One question paper + one student's answer sheet per session; sessions live
-  in memory and expire after 2 hours (nothing persists across a server
-  restart, by design — no database per the assignment constraints).
+  in server memory and expire after 2 hours. A server restart clears active
+  sessions; there is no database or saved assessment history.
+- Uploaded page images are sent to the configured Gemini API for analysis.
+  Do not upload identifiable student work unless you have checked your
+  organization's policies, applicable privacy requirements, and the AI
+  provider's data-handling terms.
 - Handwriting legibility limits OCR/matching accuracy, as with any OCR
   system; very poor handwriting or heavy cross-outs may be transcribed
   incorrectly or left unmatched.
 - Question matching relies on the student having labelled their answers
   (e.g. "Q1", "2)", "11 a"); a completely unlabelled answer may be classified
   as unmatched even if a human grader could infer its target from content.
-- Free-tier Gemini rate limits mean extraction can occasionally take a
-  couple of retries (handled automatically) or, in rare cases, fail if the
-  daily quota is exhausted — see the model note above.
+- Gemini API rate limits or quota availability can delay or prevent analysis.
+  Transient `429` and `503` errors are retried automatically, but some failures
+  may require trying again later or checking your API account's quota.
 
 ## Project structure
 
@@ -122,38 +124,60 @@ VedaAI/
 ## Prerequisites
 
 - Node.js 20+ (tested on Node 24) and npm.
-- A free Gemini API key (see below).
+- A Gemini API key (see below; check the provider's current pricing and
+  account requirements).
 
-## Getting a Gemini API key
+## Get a Gemini API key
 
-1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
-2. Sign in with a Google account and click **Create API key** (free tier,
-   no billing required).
-3. Copy the key — you'll paste it into `server/.env` below.
+1. Visit [Google AI Studio API keys](https://aistudio.google.com/apikey).
+2. Sign in and create or select an API key.
+3. Keep the key private. Add it to `server/.env` as described below; do not
+   commit that file or expose the key in frontend code.
 
-## Running locally
+## Run locally
 
-```bash
-# 1. Clone/enter the project, then install everything (root + client + server)
+From the project root, install the dependencies:
+
+```sh
 npm install
+```
 
-# 2. Configure your API key
+Create `server/.env` by copying `server/.env.example`, then edit it and set
+your API key:
+
+```dotenv
+GEMINI_API_KEY=your_api_key_here
+```
+
+For PowerShell on Windows:
+
+```powershell
+Copy-Item server\.env.example server\.env
+```
+
+For macOS/Linux:
+
+```sh
 cp server/.env.example server/.env
-# open server/.env and set:
-#   GEMINI_API_KEY=your_key_here
+```
 
-# 3. Start the backend (http://localhost:3001)
+Start the backend in one terminal:
+
+```sh
 npm run dev:server
+```
 
-# 4. In a second terminal, start the frontend (http://localhost:5173)
+Start the frontend in a second terminal:
+
+```sh
 npm run dev:client
 ```
 
-Open **http://localhost:5173** in your browser — the Vite dev server proxies
-any `/api/*` request to the Express server on port 3001, so both must be
-running. Upload a question paper and an answer sheet to try the full flow.
+Open **http://localhost:5173**. The Vite development server proxies API
+requests to the backend at **http://localhost:3001**, so keep both processes
+running. Upload a question paper and an answer sheet to try the workflow.
 
-To stop either process, `Ctrl+C` in its terminal.
+Stop each process with `Ctrl+C` in its terminal.
 
 ### Available scripts (run from the project root)
 
@@ -169,14 +193,13 @@ To stop either process, `Ctrl+C` in its terminal.
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
-| `GEMINI_API_KEY` | Yes | — | From aistudio.google.com/apikey |
+| `GEMINI_API_KEY` | Yes | — | Your Google Gemini API key |
 | `GEMINI_MODEL` | No | `gemini-3.1-flash-lite` | Any Gemini model your key can access |
 | `PORT` | No | `3001` | Port the Express server listens on |
 
 ## Running the production build locally
 
-This is the same thing a host like Render runs — useful to sanity-check
-before deploying:
+This builds the frontend and serves it and the API from one Node.js process:
 
 ```bash
 npm install
@@ -184,8 +207,8 @@ npm run build   # builds client/dist
 npm start       # one process serves the built frontend + /api on $PORT
 ```
 
-Then open **http://localhost:3001** (or your `$PORT`) — no separate frontend
-dev server needed in this mode.
+Then open **http://localhost:3001** (or the configured `PORT`). No separate
+frontend development server is needed in this mode.
 
 ## Deploying
 
